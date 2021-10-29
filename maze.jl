@@ -9,7 +9,7 @@ function get_map() :: Matrix{Int64}
          0 0 1 1 0
          0 0 0 1 0])
 end
-function move!(position, forward, dir, does_fail)
+function move!(position, trace_map)
     map = get_map()
     fail = [1, 1, 10]
     if position[1:2] == goal
@@ -21,8 +21,8 @@ function move!(position, forward, dir, does_fail)
         position[3] -= 1
         return position 
     end
-    d = dir ? 1 : 2
-    f = forward ? 1 : -1
+    d = trace_map[(position[1], position[2])][1] ? 1 : 2
+    f = trace_map[(position[1], position[2])][2] ? 1 : 2
     position[d] = position[d] + f
     if position[d] > 5
         position[d] = 5
@@ -34,15 +34,29 @@ function move!(position, forward, dir, does_fail)
     end
     return position
 end
+function resolve(position, dir_map)
+    pos = [1,1,0]
+    pos_set = Set()
+    while !in(pos, pos_set)
+        pos = move!(pos, 
+                dir_map
+            )
+        push!(pos_set, pos)
+    end
+    return pos
+end
 @gen function model()
     position = [1, 1, 0]
-    for index in 1:8
-        position = move!(position,
-            @trace(bernoulli(0.5), (index, :dir)), 
-            @trace(bernoulli(0.5), (index, :forward)),
-            @trace(bernoulli(0.5), (index, :fail))
-        )
+    maze = get_map()
+    dir_maze = Dict()
+    for index_x in 1:size(maze, 1)
+        for index_y in 1:size(maze, 2)
+                dir_maze[(index_x, index_y)] = (@trace(bernoulli(0.5), (index_x, index_y, :dir)), 
+                @trace(bernoulli(0.5), (index_x, index_y, :forward)),
+                @trace(bernoulli(0.5), (index_x, index_y, :fail)))
+        end
     end
+    position = resolve(position, dir_maze)
     @trace(normal(position[1], 0.01), :x)
     @trace(normal(position[2], 0.01), :y)
     return position
@@ -64,20 +78,32 @@ println(get_score(start))
 println(get_score(conclusion))
 
 function draw(trace)
+    dir_map = get_map()
+    directions = Dict()
+    for x in 1:size(dir_map, 1)
+        for y in 1:size(dir_map, 2)
+            directions[x, y] = (
+                get_value(trace, (x, y, :dir)),
+                get_value(trace, (x, y, :forward)),
+                get_value(trace, (x, y, :fail)),
+                )
+        end
+    end
     pos = [1,1,0]
     i = 1
     traced_map::Matrix{Int64} = get_map() * -1
-    while has_value(trace, (i, :dir))
+    pos_set = Set()
+    while !in(pos, pos_set)
         traced_map[pos[1], pos[2]] = i
         pos = move!(pos, 
-            get_value(trace, (i, :dir)),
-            get_value(trace, (i, :forward)),
-            get_value(trace, (i, :fail))
+                directions
             )
+        push!(pos_set, pos)
         println("Got back ", pos)
         i = i + 1
     end
     traced_map[pos[1], pos[2]] = 99
     display(traced_map)
+    return directions
 end
 draw(get_choices(conclusion))
